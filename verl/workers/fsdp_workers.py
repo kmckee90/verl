@@ -67,7 +67,7 @@ from verl.utils.import_utils import import_external_libs
 from verl.utils.model import compute_position_id_with_mask
 from verl.workers.sharding_manager.fsdp_ulysses import FSDPUlyssesShardingManager
 from verl.utils.device import get_device_name, get_torch_device, is_cuda_available, is_npu_available
-
+from verl.models.entropy_enhanced_wrapper import EntropyEnhancedModelWrapper
 
 from peft import LoraConfig, TaskType, get_peft_model
 from codetiming import Timer
@@ -253,6 +253,15 @@ class ActorRolloutRefWorker(Worker):
                 config=actor_model_config,
                 trust_remote_code=trust_remote_code,
             )
+
+            # Wrap with entropy enhancement
+            if self.config.get('use_entropy_embeddings', False):
+                actor_module = EntropyEnhancedModelWrapper(
+                    base_model=actor_module,
+                    hidden_size=actor_module.config.hidden_size
+                )
+            else:
+                actor_module = actor_module
 
             # Apply Liger kernel to the model if use_liger is set to True
             if use_liger:

@@ -74,7 +74,7 @@ class DataParallelPPOActor(BasePPOActor):
         )
         self.device_name = get_device_name()
 
-    def _forward_micro_batch(self, micro_batch, temperature, calculate_entropy=False) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _forward_micro_batch(self, micro_batch, temperature, calculate_entropy=True) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:
             entropy: # (bs, response_len)
@@ -136,6 +136,14 @@ class DataParallelPPOActor(BasePPOActor):
                 extra_args = {}
                 if self.use_fused_kernels:
                     extra_args["temperature"] = temperature
+
+                # Store entropy for next forward pass
+                if 'past_entropy' in micro_batch:
+                    past_entropy = micro_batch['past_entropy']
+                    if past_entropy is not None:
+                        # Ensure correct device
+                        past_entropy = past_entropy.to(input_ids.device)
+                        extra_args['past_entropy'] = past_entropy
 
                 output = self.actor_module(
                     input_ids=input_ids_rmpad,
@@ -208,6 +216,14 @@ class DataParallelPPOActor(BasePPOActor):
                 extra_args = {}
                 if self.use_fused_kernels:
                     extra_args["temperature"] = temperature
+
+                if 'past_entropy' in micro_batch:
+                    past_entropy = micro_batch['past_entropy']
+                    if past_entropy is not None:
+                        # Ensure correct device
+                        past_entropy = past_entropy.to(input_ids.device)
+                        extra_args['past_entropy'] = past_entropy
+                
                 output = self.actor_module(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
@@ -229,6 +245,12 @@ class DataParallelPPOActor(BasePPOActor):
                     log_probs = logprobs_from_logits(logits, micro_batch["responses"])
                     if calculate_entropy:
                         entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
+
+
+
+
+            # Store current entropy for next token generation
+            micro_batch['past_entropy'] = entropy.detach()
 
             return entropy, log_probs
 
