@@ -14,7 +14,7 @@
 """
 The main entry point to run the PPO algorithm
 """
-
+import time
 import logging
 import os
 import ray
@@ -255,13 +255,15 @@ class ActorRolloutRefWorker(Worker):
             )
 
             # Wrap with entropy enhancement
-            if self.config.get('use_entropy_embeddings', False):
+            if self.config.model.get('use_entropy_embeddings', False):
                 actor_module = EntropyEnhancedModelWrapper(
                     base_model=actor_module,
                     hidden_size=actor_module.config.hidden_size
                 )
+                print("[ENTROPY] Using EntropyEnhancedModelWrapper")
             else:
                 actor_module = actor_module
+                print("[ENTROPY] NOT USING WRAPPER")
 
             # Apply Liger kernel to the model if use_liger is set to True
             if use_liger:
@@ -278,6 +280,9 @@ class ActorRolloutRefWorker(Worker):
 
             # some parameters may not in torch_dtype. TODO(zhangchi.usc1992) remove this after we switch to fsdp2
             actor_module.to(torch_dtype)
+
+            print(f"286: [ENTROPY] Still using EntropyEnhancedModelWrapper? Type: {type(actor_module)}")            
+
 
             if enable_gradient_checkpointing:
                 actor_module.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})

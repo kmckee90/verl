@@ -7,10 +7,21 @@ class EntropyEnhancedModelWrapper(nn.Module):
         super().__init__()
         self.base_model = base_model
         self.entropy_embedding = EntropyEmbeddingProjection(hidden_size)
+
+    def __getattr__(self, name):
+        # Delegate all unknown attributes to base_model
+        # Check if base_model is in our modules (where nn.Module stores submodules)
+        if hasattr(self, '_modules') and 'base_model' in self._modules:
+            base_model = self._modules['base_model']
+            try:
+                return getattr(base_model, name)
+            except AttributeError:
+                pass
         
-        # Track entropy embedding statistics for logging
-        self.entropy_embedding_norms = []
-        self.entropy_application_count = 0
+        # If we get here, neither wrapper nor base_model has the attribute
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
 
     def forward(self, input_ids, attention_mask=None, position_ids=None, past_entropy=None, **kwargs):
         # Get embeddings from base model
@@ -31,12 +42,8 @@ class EntropyEnhancedModelWrapper(nn.Module):
             print(f"[ENTROPY_DEBUG] past_entropy range: [{past_entropy.min().item():.6f}, {past_entropy.max().item():.6f}]")
             print(f"[ENTROPY_DEBUG] entropy_embeds shape: {entropy_embeds.shape}")
             print(f"[ENTROPY_DEBUG] entropy_embeds norm: {entropy_norm:.6f}")
-            print(f"[ENTROPY_DEBUG] entropy_embeds mean abs: {entropy_embeds.abs().mean().item():.6f}")
-            
-            # Track for wandb logging
-            self.entropy_embedding_norms.append(entropy_norm)
-            self.entropy_application_count += 1
-            
+            print(f"[ENTROPY_DEBUG] entropy_embeds mean abs: {entropy_embeds.abs().mean().item():.6f}")            
+
             inputs_embeds = inputs_embeds + entropy_embeds
         else:
             print(f"[ENTROPY_DEBUG] past_entropy is None - entropy embeddings NOT applied")
@@ -47,24 +54,3 @@ class EntropyEnhancedModelWrapper(nn.Module):
                               position_ids=position_ids,
                               **kwargs)
     
-    def get_entropy_metrics(self):
-        """Get and reset entropy embedding metrics for logging."""
-        if not self.entropy_embedding_norms:
-            return {}
-        
-        import torch
-        norms_tensor = torch.tensor(self.entropy_embedding_norms)
-        metrics = {
-            "entropy/embedding_norm_mean": norms_tensor.mean().item(),
-            "entropy/embedding_norm_std": norms_tensor.std().item(),
-            "entropy/embedding_norm_max": norms_tensor.max().item(),
-            "entropy/embedding_norm_min": norms_tensor.min().item(),
-            "entropy/application_count": self.entropy_application_count,
-        }
-        
-        # Reset for next collection period
-        self.entropy_embedding_norms.clear()
-        self.entropy_application_count = 0
-        
-        return metrics
-
