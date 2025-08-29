@@ -79,6 +79,10 @@ from safetensors.torch import save_file
 from dataclasses import asdict
 import json
 
+from vllm.model_executor.models import ModelRegistry
+from vllm.model_executor.models.transformers import TransformersForCausalLM
+from transformers import Qwen3ForCausalLM
+
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
@@ -247,24 +251,38 @@ class ActorRolloutRefWorker(Worker):
             else:
                 actor_module_class = AutoModelForCausalLM
 
-            actor_module = actor_module_class.from_pretrained(
-                pretrained_model_name_or_path=local_path,
-                torch_dtype=torch_dtype,
-                config=actor_model_config,
-                trust_remote_code=trust_remote_code,
-            )
 
-            # Wrap with entropy enhancement
             if self.config.model.get('use_entropy_embeddings', False):
-                actor_module = EntropyEnhancedModelWrapper(
-                    base_model=actor_module,
-                    hidden_size=actor_module.config.hidden_size
+
+
+                ModelRegistry.register_model(
+                    "Qwen3ForCausalLM",
+                    EntropyEnhancedModelWrapper,
                 )
+                
+                actor_module = actor_module_class.from_pretrained(
+                    pretrained_model_name_or_path=local_path,
+                    torch_dtype=torch_dtype,
+                    config=actor_model_config,
+                    trust_remote_code=trust_remote_code,
+                )       
+                # actor_module = EntropyEnhancedModelWrapper(actor_model_config, base_model=base)
+                
                 print("[ENTROPY] Using EntropyEnhancedModelWrapper")
+
             else:
-                actor_module = actor_module
+                actor_module = actor_module_class.from_pretrained(
+                    pretrained_model_name_or_path=local_path,
+                    torch_dtype=torch_dtype,
+                    config=actor_model_config,
+                    trust_remote_code=trust_remote_code,
+                )              
                 print("[ENTROPY] NOT USING WRAPPER")
 
+
+            print(f"[ENTROPY] Base model type: {type(actor_module)}")
+
+            
             # Apply Liger kernel to the model if use_liger is set to True
             if use_liger:
                 from liger_kernel.transformers.monkey_patch import _apply_liger_kernel_to_instance
@@ -277,6 +295,9 @@ class ActorRolloutRefWorker(Worker):
                 ulysses_sp_size=self.ulysses_sequence_parallel_size,
                 use_fused_kernels=use_fused_kernels,
             )
+
+            breakpoint()
+
 
             # some parameters may not in torch_dtype. TODO(zhangchi.usc1992) remove this after we switch to fsdp2
             actor_module.to(torch_dtype)
