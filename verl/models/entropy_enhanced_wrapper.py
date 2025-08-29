@@ -8,38 +8,6 @@ from torch._dynamo import allow_in_graph
 from torch._dynamo import disable
 
 
-
-class EntropyEnhancedEmbedding(nn.Module):
-    def __init__(self, base_emb, entropy_module):
-        super().__init__()
-        self.base_emb = base_emb
-        self._entropy_module = entropy_module
-        self._last_entropy = None
-
-    def set_entropy(self, past_entropy):
-        self._last_entropy = past_entropy
-
-    def forward(self, input_ids):
-        embeds = self.base_emb(input_ids)
-        # if self._last_entropy is not None:
-            # embeds = embeds + self.entropy_module(self._last_entropy)
-        embeds = torch.rand_like(embeds)*8-4
-        return embeds
-
-class EntropyAugmentedEmbedding(nn.Module):
-    def __init__(self, base_emb, entropy_emb):
-        super().__init__()
-        self.base_emb = base_emb
-        self.entropy_emb = entropy_emb
-        self._last_entropy = None
-    def set_entropy(self, past_entropy): self._last_entropy = past_entropy
-    def forward(self, input_ids):
-        embs = self.base_emb(input_ids)
-        # if self._last_entropy is not None:
-            # x = x + self.entropy_emb(self._last_entropy)
-        x = torch.rand_like(embs)*8-4
-        return x
-    
     
 class EntropyEnhancedModelWrapper(TransformersForCausalLM):
     def __init__(self, *, vllm_config=None, config=None, prefix=None, **kwargs):
@@ -70,38 +38,22 @@ class EntropyEnhancedModelWrapper(TransformersForCausalLM):
         if hf_config is None:
             raise ValueError("Could not resolve HuggingFace config from vllm_config/config.")
 
-        # Build the HuggingFace Qwen3 model
-        # self.transformer = Qwen3ForCausalLM(hf_config)
-
         # Add your extra embedding
         self.entropy_embedding = EntropyEmbeddingProjection(hf_config.hidden_size)
-        # self.entropy_embedding = EntropyEmbeddingProjection(hf_config.hidden_size)
-        
-        # class EntropyWrapper(nn.Module):
-        #     def __init__(self, parent):
-        #         super().__init__()
-        #         # self.base_emb = base_emb
-        #         # self.entropy_module = entropy_module
-        #         self.parent = parent
-        #     def forward(self, input_ids):
-        #         embeds = self.parent.model.model.embed_tokens(input_ids)
-        #         # if self.parent._last_entropy is not None:
-        #             # embeds = embeds + self.entropy_module(self.parent._last_entropy)
-        #         embeds = torch.rand_like(embeds)*8-4
-        #         return embeds
-        
+
         self._last_entropy = None
         emb = self.model.model.embed_tokens
         orig_forward = emb.forward
         def new_forward_fn(*args, **kwargs):
-            x = orig_forward(*args, **kwargs)
+            x = orig_forward(*args, **kwargs) 
             if self._last_entropy is not None:
-                x = x + self.entropy_embedding(self._last_entropy)
+                # x = x + self.entropy_embedding(self._last_entropy)
+                x = torch.rand_like(x)*8-4
             return x         
         emb.forward = new_forward_fn        
         
         print("[ENTROPY] USING WRAPPER, FINISHED INIT")
-        print(f"[ENTROPY] INPUT EMBEDDING MODULE: {self.model.get_input_embeddings}")
+        # print(f"[ENTROPY] INPUT EMBEDDING MODULE: {self.model.get_input_embeddings}")
 
 
     def set_entropy(self, past_entropy):

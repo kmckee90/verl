@@ -138,12 +138,19 @@ class DataParallelPPOActor(BasePPOActor):
                     extra_args["temperature"] = temperature
 
                 # Store entropy for next forward pass
-                if 'past_entropy' in micro_batch:
-                    past_entropy = micro_batch['past_entropy']
-                    if past_entropy is not None:
-                        # Ensure correct device
-                        past_entropy = past_entropy.to(input_ids.device)
-                        extra_args['past_entropy'] = past_entropy
+                # if 'past_entropy' in micro_batch:
+                #     past_entropy = micro_batch['past_entropy']
+                #     if past_entropy is not None:
+                #         # Ensure correct device
+                #         past_entropy = past_entropy.to(input_ids.device)
+                #         extra_args['past_entropy'] = past_entropy
+                        
+                #         # Set entropy in the wrapper for embedding
+                #         if hasattr(self.actor_module, 'set_entropy'):
+                #             self.actor_module.set_entropy(past_entropy)
+                #             print("[ENTROPY] STORED ENTROPY VALS IN ACTOR_MODULE")
+
+                print("[ENTROPY] RUNNING ACTOR AT LINE 155")
 
                 output = self.actor_module(
                     input_ids=input_ids_rmpad,
@@ -217,13 +224,20 @@ class DataParallelPPOActor(BasePPOActor):
                 if self.use_fused_kernels:
                     extra_args["temperature"] = temperature
 
-                if 'past_entropy' in micro_batch:
-                    past_entropy = micro_batch['past_entropy']
-                    if past_entropy is not None:
-                        # Ensure correct device
-                        past_entropy = past_entropy.to(input_ids.device)
-                        extra_args['past_entropy'] = past_entropy
-                
+                # if 'past_entropy' in micro_batch:
+                #     past_entropy = micro_batch['past_entropy']
+                #     if past_entropy is not None:
+                #         # Ensure correct device
+                #         past_entropy = past_entropy.to(input_ids.device)
+                #         extra_args['past_entropy'] = past_entropy
+
+                        # # Set entropy in the wrapper for embedding
+                        # if hasattr(self.actor_module, 'set_entropy'):
+                        #     self.actor_module.set_entropy(past_entropy)
+                        #     print("[ENTROPY] STORED ENTROPY VALS IN ACTOR_MODULE")
+
+                print("[ENTROPY] RUNNING ACTOR AT LINE 237")
+          
                 output = self.actor_module(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
@@ -247,10 +261,8 @@ class DataParallelPPOActor(BasePPOActor):
                         entropy = verl_F.entropy_from_logits(logits)  # (bsz, response_length)
 
 
-
-
             # Store current entropy for next token generation
-            micro_batch['past_entropy'] = entropy.detach()
+            # micro_batch['past_entropy'] = entropy.detach()
 
             return entropy, log_probs
 
