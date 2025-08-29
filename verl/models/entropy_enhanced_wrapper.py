@@ -4,11 +4,9 @@ import torch.nn as nn
 from vllm.model_executor.models.transformers import TransformersForCausalLM
 from transformers import Qwen3ForCausalLM
 import torch
-from torch._dynamo import allow_in_graph
-from torch._dynamo import disable
+from torch._dynamo import allow_in_graph, disable, graph_break
 
-
-    
+ 
 class EntropyEnhancedModelWrapper(TransformersForCausalLM):
     def __init__(self, *, vllm_config=None, config=None, prefix=None, **kwargs):
         """
@@ -41,24 +39,50 @@ class EntropyEnhancedModelWrapper(TransformersForCausalLM):
         # Add your extra embedding
         self.entropy_embedding = EntropyEmbeddingProjection(hf_config.hidden_size)
 
-        self._last_entropy = None
+
+        # Hook into embedding layer
         emb = self.model.model.embed_tokens
-        orig_forward = emb.forward
-        def new_forward_fn(*args, **kwargs):
-            x = orig_forward(*args, **kwargs) 
-            if self._last_entropy is not None:
-                # x = x + self.entropy_embedding(self._last_entropy)
-                x = torch.rand_like(x)*8-4
+        # emb._last_entropy = torch.zeros((1,1), device=self.entropy_embedding.entropy_projection[0].weight.device)
+
+        dtype = self.entropy_embedding.entropy_projection[0].weight.dtype
+        device = self.entropy_embedding.entropy_projection[0].weight.device
+        # emb.register_buffer("_last_entropy", torch.tensor(0.0, dtype=dtype, device=device))
+        emb._last_entropy = torch.zeros((1,1), dtype=dtype, device=device)
+        
+        orig_emb_forward = emb.forward
+        
+        def new_emb_forward(*args, **kwargs):
+            x = orig_emb_forward(*args, **kwargs)
+            # x = (1-emb._last_entropy)*x + emb._last_entropy * torch.rand_like(x)*8-4
+            x = x + self.entropy_embedding(emb._last_entropy)
             return x         
-        emb.forward = new_forward_fn        
+        emb.forward = new_emb_forward
+        
+        #Forward hook        
+        orig_forward = self.model.forward
+        def new_forward(*args, **kwargs):
+            outputs = orig_forward(*args, **kwargs) #(?, 151936)
+
+        # Extract logits robustly
+            if isinstance(outputs, torch.Tensor):
+                logits = outputs
+            elif isinstance(outputs, (tuple, list)):
+                logits = outputs[0]
+            elif hasattr(outputs, "logits"):
+                logits = outputs.logits
+            else:
+                logits = None
+
+            if logits is not None:
+                probs = torch.softmax(logits, dim=-1)
+                entropy_seq = -(probs * torch.log(probs + 1e-8)).sum()  # (?, ) Apparently 32768 if sum(-1) or else 1
+                emb._last_entropy = entropy_seq.reshape(-1,1).detach().to(emb._last_entropy.device)
+            return outputs
+        self.model.forward = new_forward
         
         print("[ENTROPY] USING WRAPPER, FINISHED INIT")
         # print(f"[ENTROPY] INPUT EMBEDDING MODULE: {self.model.get_input_embeddings}")
 
-
-    def set_entropy(self, past_entropy):
-        """Store entropy input for the next forward pass."""
-        self._last_entropy = past_entropy
         
     def load_weights(self, params, *args, **kwargs):
         """

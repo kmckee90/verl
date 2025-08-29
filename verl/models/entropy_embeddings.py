@@ -6,17 +6,17 @@ class EntropyEmbeddingProjection(nn.Module):
         super().__init__()
         self.entropy_projection = nn.Sequential(
             nn.Linear(1, hidden_size // 4),
-            nn.GELU(),
-            nn.Dropout(dropout),
+            nn.SiLU(),
+            # nn.Dropout(dropout),
             nn.Linear(hidden_size // 4, hidden_size),
-            nn.LayerNorm(hidden_size)
+            # nn.LayerNorm(hidden_size)
         )
         
         # Initialize with Xavier initialization scaled down for stable start
         for module in self.entropy_projection:
             if isinstance(module, nn.Linear):
-                nn.init.xavier_normal_(module.weight, gain=0.0001)  # Very small scale
-                nn.init.normal_(module.bias, mean=0.0, std=0.0001)
+                nn.init.xavier_normal_(module.weight, gain=0.1)  # Very small scale
+                nn.init.normal_(module.bias, mean=0.0, std=0.1)
 
     def forward(self, entropy: torch.Tensor) -> torch.Tensor:
         # entropy: (batch_size, seq_len)
