@@ -42,18 +42,15 @@ class EntropyEnhancedModelWrapper(TransformersForCausalLM):
 
         # Hook into embedding layer
         emb = self.model.model.embed_tokens
-        # emb._last_entropy = torch.zeros((1,1), device=self.entropy_embedding.entropy_projection[0].weight.device)
 
         dtype = self.entropy_embedding.entropy_projection[0].weight.dtype
         device = self.entropy_embedding.entropy_projection[0].weight.device
-        # emb.register_buffer("_last_entropy", torch.tensor(0.0, dtype=dtype, device=device))
         emb._last_entropy = torch.zeros((1,1), dtype=dtype, device=device)
         
         orig_emb_forward = emb.forward
         
         def new_emb_forward(*args, **kwargs):
             x = orig_emb_forward(*args, **kwargs)
-            # x = (1-emb._last_entropy)*x + emb._last_entropy * torch.rand_like(x)*8-4
             x = x + self.entropy_embedding(emb._last_entropy)
             return x         
         emb.forward = new_emb_forward
@@ -81,7 +78,6 @@ class EntropyEnhancedModelWrapper(TransformersForCausalLM):
         self.model.forward = new_forward
         
         print("[ENTROPY] USING WRAPPER, FINISHED INIT")
-        # print(f"[ENTROPY] INPUT EMBEDDING MODULE: {self.model.get_input_embeddings}")
 
         
     def load_weights(self, params, *args, **kwargs):
@@ -104,6 +100,24 @@ class EntropyEnhancedModelWrapper(TransformersForCausalLM):
         # Collect the provided keys
         provided_keys = {k for k, _ in params_iter}
 
+        #DEBUGGING
+        entropy_keys = [k for k in provided_keys if k.startswith("entropy_embedding.")]
+        if len(entropy_keys)>0:
+            for k in entropy_keys:
+                print(f"[WEIGHT LOADER] Found {k}")
+        else:
+            print("[WEIGHT LOADER] Did not find entropy embedding weights")
+
+
+        embed_keys = [k for k in provided_keys if k.startswith("model.embed_tokens.")]
+        if len(embed_keys)>0:
+            for k in embed_keys:
+                print(f"[WEIGHT LOADER] Found {k}")
+        else:
+            print("[WEIGHT LOADER] Did not find any embedding weights")
+
+
+
         # If entropy params are missing, inject the module's current weights
         if not any(k.startswith("entropy_embedding.") for k in provided_keys):
             extra = []
@@ -114,4 +128,64 @@ class EntropyEnhancedModelWrapper(TransformersForCausalLM):
 
         # Now call parent loader with the combined list
         return super().load_weights(params_iter, *args, **kwargs)
+
+
+class EmbedWrapper(nn.Module):
+    def __init__(self, token_embedding, ent_embedding):
+        super().__init__()
+        self.ent_emb = ent_embedding
+        self.orig_emb = token_embedding
+        self.register_buffer("_last_entropy", torch.zeros((1,1,1)))
+        
+    def __getattr__(self, name):
+        # defer unknown attributes to the original embedding
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.orig_emb, name)
+    
+    def forward(self, input):
+        out = self.orig_emb(input)
+
+        #If shape is not equal (ie due to the prompt) then start from zero padding. 
+        if self._last_entropy.shape[1] != out.shape[1]:
+            # with torch.no_grad():
+                # logits = self._model_forward(inputs_embeds=out).last_hidden_state
+                # entropies = self.compute_prompt_entropies(logits)
+                # self._last_entropy = entropies
+            self._last_entropy = torch.zeros((out.shape[0],out.shape[1],1), dtype=out.dtype, device=out.device)
+            
+            print("[FEEDBACK TENSOR] SHAPE DIFFERENCE: RESETTING")
+
+        add = self.ent_emb(self._last_entropy.detach())                # keep module on correct device once, outside the hook
+        out = out + add
+            
+        print("[FEEDBACK TENSOR] Last entropy: ", self._last_entropy)
+        print("[FEEDBACK TENSOR] embed forward, entropy: ", add.shape)
+        print("[FEEDBACK TENSOR] embed forward, token: ",out.shape)
+        print("[FEEDBACK TENSOR] entropy shape: ", self._last_entropy.shape)
+        return out 
+
+    def compute_prompt_entropies(self, logits):
+        with torch.no_grad():
+            probs = torch.softmax(logits, dim=-1)
+            entropies = -(probs * torch.log(probs.clamp_min(1e-6))).sum(dim=-1, keepdim=True).detach()   # (B, T)
+            return entropies
+
+class EntropyEnhancedWrapperHF(Qwen3ForCausalLM):
+    def __init__(self, config):
+        super().__init__(config)
+        
+        def lm_head_hook(module, inputs, logits):
+            # logits: (B, T, V)
+            with torch.no_grad():
+                probs = torch.softmax(logits, dim=-1)
+                ent_seq = -(probs * torch.log(probs.clamp_min(1e-8))).sum(dim=-1, keepdim=True).detach()   # (B, T)
+                self.model.embed_tokens._last_entropy = ent_seq
+
+                # last = ent_seq[:, -1:].unsqueeze(-1).detach()                       # (B, 1, 1)
+                # self.model.embed_tokens._last_entropy = torch.cat((self.model.embed_tokens._last_entropy, last),dim=1)
+
+            return logits
+        self.lm_head.register_forward_hook(lm_head_hook)
 

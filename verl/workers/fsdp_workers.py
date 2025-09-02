@@ -67,7 +67,10 @@ from verl.utils.import_utils import import_external_libs
 from verl.utils.model import compute_position_id_with_mask
 from verl.workers.sharding_manager.fsdp_ulysses import FSDPUlyssesShardingManager
 from verl.utils.device import get_device_name, get_torch_device, is_cuda_available, is_npu_available
-from verl.models.entropy_enhanced_wrapper import EntropyEnhancedModelWrapper
+from verl.models.entropy_enhanced_wrapper import EntropyEnhancedModelWrapper, EntropyEnhancedWrapperHF, EmbedWrapper
+from verl.models.entropy_embeddings import EntropyEmbeddingProjection
+
+# from verl.models.entropy_enhanced_wrapper_hf import EntropyEnhancedWrapperHF
 
 from peft import LoraConfig, TaskType, get_peft_model
 from codetiming import Timer
@@ -254,21 +257,27 @@ class ActorRolloutRefWorker(Worker):
 
             if self.config.model.get('use_entropy_embeddings', False):
 
-
                 ModelRegistry.register_model(
                     "Qwen3ForCausalLM",
                     EntropyEnhancedModelWrapper,
                 )
                 
-                actor_module = actor_module_class.from_pretrained(
+                actor_module = EntropyEnhancedWrapperHF.from_pretrained(
                     pretrained_model_name_or_path=local_path,
                     torch_dtype=torch_dtype,
                     config=actor_model_config,
                     trust_remote_code=trust_remote_code,
-                )       
-                # actor_module = EntropyEnhancedModelWrapper(actor_model_config, base_model=base)
+                )
+                actor_module.entropy_embedding = EntropyEmbeddingProjection(actor_model_config.hidden_size)
+                actor_module.model.embed_tokens = EmbedWrapper(actor_module.model.embed_tokens,
+                                                               actor_module.entropy_embedding)                    
                 
+                print("[ENTROPY] EntropyEnhancedModelWrapper arch:",{actor_module})                
                 print("[ENTROPY] Using EntropyEnhancedModelWrapper")
+                print("[ENTROPY] EMBED ORIG DEVICE:",{actor_module.model.embed_tokens.orig_emb.weight.device})
+                print("[ENTROPY] EMBED NEW DEVICE:",{actor_module.model.embed_tokens.ent_emb.entropy_projection[0].weight.device})
+                print("[ENTROPY] LAYER DEVICE:",{actor_module.model.layers[0].self_attn.q_proj.weight.device})
+
 
             else:
                 actor_module = actor_module_class.from_pretrained(
@@ -391,6 +400,12 @@ class ActorRolloutRefWorker(Worker):
             actor_module_fsdp = actor_module
         else:
             raise NotImplementedError(f"not implement {fsdp_strategy}")
+
+        print(f"[FSDP DEBUG] {actor_module}")
+        print("[FSDP] EMBED DEVICE:",{actor_module.model.embed_tokens.orig_emb.weight.device})
+        print("[FSDP] EMBED NEW DEVICE:",{actor_module.model.embed_tokens.ent_emb.entropy_projection[0].weight.device})
+        print("[FSDP] LAYER DEVICE:",{actor_module.model.layers[0].self_attn.q_proj.weight.device})
+
 
         if enable_activation_offload:
             enable_activation_offloading(actor_module_fsdp, fsdp_strategy, enable_gradient_checkpointing)

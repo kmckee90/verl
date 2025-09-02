@@ -15,11 +15,11 @@ class EntropyEmbeddingProjection(nn.Module):
         # Initialize with Xavier initialization scaled down for stable start
         for module in self.entropy_projection:
             if isinstance(module, nn.Linear):
-                nn.init.xavier_normal_(module.weight, gain=0.1)  # Very small scale
-                nn.init.normal_(module.bias, mean=0.0, std=0.1)
+                nn.init.xavier_normal_(module.weight, gain=0.001)  # Very small scale
+                nn.init.normal_(module.bias, mean=0.0, std=0.0001)
 
     def forward(self, entropy: torch.Tensor) -> torch.Tensor:
         # entropy: (batch_size, seq_len)
         # output: (batch_size, seq_len, hidden_size)
-        entropy_expanded = entropy.unsqueeze(-1)  # (batch_size, seq_len, 1)
-        return self.entropy_projection(entropy_expanded)
+        # entropy_expanded = entropy.unsqueeze(-1)  # (batch_size, seq_len, 1)
+        return self.entropy_projection(entropy)
